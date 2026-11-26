@@ -220,6 +220,27 @@ skills never reach the prompt and `read_skill` refuses them.
 
 ---
 
+## Our changes vs upstream (serenterprise-ai-a fork)
+
+This fork runs the ChoupenClaw Sonia server on sr-zh-1. Upstream: [grigio/sonia-assistant](https://github.com/grigio/sonia-assistant). Our changes on `main`:
+
+- **Web UI behind `tailscale serve`:** HTTPS/wss for the browser page, plus an Ollama health probe (Ollama has no `/health`).
+- **Echo guard:** speech that matches what Sonia said in the last ~20 s, starting while she speaks or up to 1.5 s after, never barges in or becomes a turn. Typical ASR phantoms ("subscribe") are dropped inside that window too. Stop words ("stop", "wait", "Sonia") always interrupt.
+- **`web_search`:** via the local SearXNG (`SEARXNG_URL`). The query goes out to public search engines.
+- **`get_weather` / `set_user_location`:** via the Open-Meteo public APIs.
+- **Honesty rule:** never claim to be checking without calling a tool. A server fallback calls the tool when the model answers a plain weather or search request without it.
+- **Interruption marker:** "[interrupted by the user]" is no longer shown to the model inside its own replies, and is stripped from output.
+- **User location and personal note:** read from `data/settings.json` (`location`, `userNote`, both git-ignored data). Nothing personal lives in the code.
+
+### Taking upstream releases
+
+```bash
+git fetch upstream
+git merge upstream/master   # merge, never rebase; resolve, run `bun run typecheck && bun test tests/unit`
+git push origin main
+```
+
+
 ## Security
 
 Everything is **localhost by design** — no login, no TLS: do not pass a non-loopback
