@@ -47,7 +47,7 @@ if (needLlama) {
   // `${LLM_BASE_URL%/v1}/health` as run.sh did it: strip a trailing /v1, ask /health.
   const base = cfg.llmBaseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   const up = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) })
-    .then((r) => r.ok)
+    .then(() => true) // local patch: Ollama has no /health; any HTTP answer = up (as probe() in src/health.ts)
     .catch(() => false);
   if (!up) {
     console.error(

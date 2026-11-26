@@ -121,6 +121,8 @@ export function originAllowed(
   // either way, so compare the bare address
   const bare = name.startsWith("[") && name.endsWith("]") ? name.slice(1, -1) : name;
   if (bare === "localhost" || bare === "::1" || bare === "127.0.0.1") return true; // rule 3
+  // local patch (sr-zh-1): names served via `tailscale serve` HTTPS, comma-separated
+  if ((process.env.SONIA_EXTRA_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean).includes(bare)) return true;
   const bind = String(bindHost ?? "").trim();
   const bindBare = bind.startsWith("[") && bind.endsWith("]") ? bind.slice(1, -1) : bind;
   if (bindBare === bare) return true;
@@ -395,6 +397,7 @@ export class WebApp {
         }
         // startResponse() cancels any answer still playing, then emits the `user` line —
         // the only place that knows the checkpoint id of the history message it creates
+        a.log(`[ws] text command from client: «${text.slice(0, 80)}»`); // local patch (sr-zh-1): diagnose interruptions
         a.startResponse(text, now(), t(this.cfg.locale, "user.typed"));
         a.setState("thinking");
         return;
@@ -416,6 +419,7 @@ export class WebApp {
         return;
       }
       case "stop":
+        a.log("[ws] stop command from client"); // local patch (sr-zh-1): diagnose interruptions
         a.stopActivity();
         return;
       case "approve":

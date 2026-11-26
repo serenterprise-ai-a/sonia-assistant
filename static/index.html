@@ -450,7 +450,9 @@
 </footer>
 
 <div id="overlay"><div data-i18n="overlay.text">Serve un clic per attivare audio e microfono.</div>
-  <button id="startBtn"><svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg><span data-i18n="overlay.start">Avvia</span></button></div>
+  <button id="startBtn"><svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg><span data-i18n="overlay.start">Avvia</span></button>
+  <div id="audioErr" role="alert" style="display:none; max-width: 340px; padding: 0 16px; text-align: center; color: #f0b429; line-height: 1.45"></div>
+  <button id="textOnlyBtn" style="display:none">Continue with text only</button></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -461,7 +463,7 @@ const $ = (id) => document.getElementById(id);
 // in UI_STRINGS — the static markup is filled from it by applyLocale() (that is what the
 // data-i18n* attributes are), the running code asks t() / tf().
 // The catalogue itself lives in src/i18n.ts (the single source, also imported by the
-// GTK client): the server stamps it in below through `__UI_STRINGS__`, because this
+// GTK client): the server stamps it in below through `the UI-strings placeholder`, because this
 // page runs before the socket exists, so it cannot fetch those strings on its own.
 const UI_STRINGS = __UI_STRINGS__; // ← src/i18n.ts, stamped in
 /** The tag the server stamped in — a raw, unstamped static/index.html stays Italian. */
@@ -1152,7 +1154,7 @@ window.addEventListener("online", () => $("aecChk").checked && playbackMode !== 
 
 // ── websocket ──
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`); // local patch: wss behind tailscale serve HTTPS
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { clearTimeout(reconnectTimer); };
   ws.onclose = (e) => {
@@ -1439,8 +1441,26 @@ async function start() {
   } catch (err) {
     console.warn(err);
     $("overlay").style.display = "flex";
+    showAudioError(err);
   }
 }
+// Explain a failed audio setup instead of leaving a Start button that seems dead.
+function showAudioError(err) {
+  if (err && err.message === "suspended") return;   // normal: waiting for the first tap
+  let msg;
+  if (typeof window.AudioContext === "undefined" || typeof window.AudioWorkletNode === "undefined")
+    msg = "This browser has no Web Audio (iPhone Lockdown Mode turns it off). In Safari: aA \u2192 Website Settings \u2192 turn Lockdown Mode off for this site, then reload. Or use a Mac.";
+  else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    msg = "This browser gives no microphone access here. Open the page in the Safari or Chrome app (not inside another app) and reload.";
+  else if (err && (err.name === "NotAllowedError" || err.name === "SecurityError"))
+    msg = "Microphone access was blocked. Allow the microphone for this site in the browser settings, then reload.";
+  else
+    msg = "Audio could not start: " + ((err && (err.name + ": " + err.message)) || err);
+  $("audioErr").textContent = msg;
+  $("audioErr").style.display = "block";
+  $("textOnlyBtn").style.display = "inline-flex";
+}
+$("textOnlyBtn").onclick = () => { $("overlay").style.display = "none"; };
 $("startBtn").onclick = async () => {
   try { await playCtx?.resume(); await micCtx?.resume(); } catch {}
   if (!micCtx) await start();
