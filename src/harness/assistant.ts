@@ -24,13 +24,16 @@ import type { HistoryMessage, ServerEvent, StateName, TaskInfo } from "../events
 import { healthUrl, llmHealthUrl, probeAll, type Target } from "../health";
 import { t, type ViaKey } from "../i18n";
 import { Logger } from "../log";
+import { loadLocation, userNote } from "../settings";
 import { type SkillInfo, Skills } from "../skills";
 import { argSummary, GATE_EXEMPT_TOOLS, Tools, toolDescription } from "../tools";
+import { forcedTool } from "../web-tools";
 import { SileroVAD } from "../vad";
 import { ChatStore, type RestoredChat } from "./chat-store";
 import { AsyncQueue, abortableIter, abortableSleep, isAbortError, now, withAbort } from "./queues";
 import { SentenceSplitter } from "./sentences";
-import { classifyYesNo } from "./text";
+import { EchoGuard } from "./echo-guard";
+import { classifyYesNo, hasInterruptMarker, hasWords, stripInterruptMarkers } from "./text";
 
 export type Utterance = {
   gen: number;
@@ -46,6 +49,8 @@ export type Utterance = {
   listenUntil: number;
   barge: boolean; // started while the assistant was talking
   partial: string;
+  /** local patch (echo guard): started while the assistant was audible or just after. */
+  echoWindow?: boolean;
 };
 
 export type Response = {
@@ -126,9 +131,22 @@ function mergeable(last: ChatMessage, msg: ChatMessage): boolean {
  * user/assistant alternation. The glued message is a copy: the history's own messages —
  * and the ids they carry — are never touched.
  */
-function forModel(history: ChatMessage[]): ChatMessage[] {
+function forModel(history: ChatMessage[], interruptedNote = ""): ChatMessage[] {
   const out: ChatMessage[] = [];
-  for (const m of history) {
+  // local patch (sr-zh-1): the "[interrupted by the user]" marker is never shown to the
+  // model inside its own text (it learned to write it, journal 06:05:13); the fact goes on
+  // the next user message as a note instead
+  let noteNext = false;
+  for (const orig of history) {
+    let m = orig;
+    if (m.role === "assistant" && typeof m.content === "string" && hasInterruptMarker(m.content)) {
+      const stripped = stripInterruptMarkers(m.content);
+      m = { ...m, content: stripped || "…" };
+      noteNext = !!interruptedNote;
+    } else if (noteNext && m.role === "user" && typeof m.content === "string") {
+      m = { ...m, content: `${interruptedNote} ${m.content}` };
+      noteNext = false;
+    }
     const last = out[out.length - 1];
     if (last && mergeable(last, m)) {
       out[out.length - 1] = {
@@ -204,6 +222,8 @@ export class Assistant {
   player!: Player;
 
   sentences: AsyncQueue<string | null> | null = null;
+  /** local patch: what Sonia said in the last ~20 s, to recognise her own echo. */
+  readonly echo = new EchoGuard();
 
   private approvalSeq = 0;
   /** Bumped by resetConversation(): a turn stamped with an older epoch is old-chat data. */
@@ -240,10 +260,47 @@ export class Assistant {
    */
   get systemPrompt(): string {
     const hint = t(this.cfg.locale, "prompt.langDefault");
+    // local patch (sr-zh-1, 2026-11-26): where the user is goes FIRST (placed near the
+    // end, the model answered "what's the weather like?" from the city name instead of
+    // calling get_weather — 0/8 vs 4-6/6 measured on qwen3-30b-a3b); the tool/honesty rules
+    // and the local time go right before the language line
+    const { top, tail } = this.localPrompt();
     if (!this.cfg.llmEnableTools || this.cfg.llmViaPi || !this.skills) {
-      return `${this.basePrompt}\n\n${hint}`;
+      return `${top}\n\n${this.basePrompt}\n\n${tail}\n\n${hint}`;
     }
-    return `${this.basePrompt}\n\n${this.skills.block()}\n\n${hint}`;
+    return `${top}\n\n${this.basePrompt}\n\n${this.skills.block()}\n\n${tail}\n\n${hint}`;
+  }
+
+  /**
+   * local patch (sr-zh-1, 2026-11-26): the user's location (data/settings.json, default
+   * Bangkok), the live-tools + honesty rule, and the local time (minute resolution: the
+   * system prompt is the KV-cache prefix, so it changes at most once a minute).
+   */
+  private localPrompt(): { top: string; tail: string } {
+    const loc = loadLocation(path.join(this.cfg.dataDir, "settings.json"));
+    let time: string;
+    try {
+      time = new Intl.DateTimeFormat(this.cfg.locale === "it" ? "it-IT" : "en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: loc.timezone,
+      }).format(new Date());
+    } catch {
+      time = new Date().toISOString();
+    }
+    const top = t(this.cfg.locale, "prompt.locationTop", {
+      city: loc.city,
+      country: loc.country,
+      tz: loc.timezone,
+      // local patch: personal context lives in data/settings.json `userNote`, never in code
+      note: (() => { const n = userNote(path.join(this.cfg.dataDir, "settings.json")); return n ? ` ${n}` : ""; })(),
+    });
+    const tail = `${t(this.cfg.locale, "prompt.honesty")}\n${t(this.cfg.locale, "prompt.localTime", { time })}`;
+    return { top, tail };
   }
 
   /** Skills as the settings drawer renders them: a fresh scan of SKILLS_DIR. */
@@ -1136,12 +1193,20 @@ export class Assistant {
       this.fitHistory(); // …and the whole history has to fit the window
       const messages: ChatMessage[] = [
         { role: "system", content: this.systemPrompt },
-        ...forModel(this.history), // two kept questions in a row are one turn *here* only
+        // two kept questions in a row are one turn *here* only
+        ...forModel(this.history, t(this.cfg.locale, "hist.interruptedNote")),
       ];
       // in pi mode pi brings its own tools (bash, read, edit…)
       const tools = this.cfg.llmEnableTools && !this.cfg.llmViaPi ? this.tools.schemas() : null;
       this.sentences = sentences;
       const splitter = new SentenceSplitter();
+      // local patch: never speak nor show the "[interrupted by the user]" marker
+      let markerSeen = false;
+      const speak = (s: string): void => {
+        const c = stripInterruptMarkers(s);
+        if (c !== s) markerSeen = true;
+        if (hasWords(c)) sentences.push(c);
+      };
       // a tool call written as *text* (no tools on offer) must never be spoken nor kept
       const markup = new ToolMarkupFilter();
       // A tool exchange has to survive the turn: `messages` is rebuilt from `this.history`
@@ -1177,6 +1242,20 @@ export class Assistant {
         this.lastPromptChars = this.historyChars();
         let textRound = "";
         let calls: ToolCall[] | null = null;
+        // local patch (sr-zh-1): the first round of a plain weather question or explicit
+        // search request is held back from the TTS until we know it called the tool — if
+        // it did not, its text (an invented forecast, "I'll search for it right away") is
+        // dropped and the call is made for it
+        const forced = round === 1 ? forcedTool(resp.userText) : null;
+        const must =
+          forced && offer?.some((s) => (s.function as { name?: string })?.name === forced.name)
+            ? forced
+            : null;
+        let held = "";
+        const say = (c: string): void => {
+          if (must) held += c;
+          else for (const s of splitter.feed(c)) speak(s);
+        };
         let reasoningStarted = false; // one blank line before each extra round's thinking
         for await (const item of abortableIter(
           this.llm.stream(messages, offer, signal),
@@ -1195,7 +1274,7 @@ export class Assistant {
             const clean = markup.feed(item.text);
             if (clean) {
               textRound += clean;
-              for (const s of splitter.feed(clean)) sentences.push(s);
+              say(clean);
             }
           } else if (item.kind === "event") {
             if (stale()) return;
@@ -1213,7 +1292,23 @@ export class Assistant {
         const tail = markup.flush(); // the last held-back piece of this round's text
         if (tail) {
           textRound += tail;
-          for (const s of splitter.feed(tail)) sentences.push(s);
+          say(tail);
+        }
+        if (must && !calls?.length) {
+          this.log(
+            `   🧭 ${must.name} asked for but not called — calling it (dropped: «${held.trim().slice(0, 80)}»)`,
+          );
+          calls = [
+            {
+              id: `auto-${must.name}-${Date.now()}`,
+              type: "function",
+              function: { name: must.name, arguments: JSON.stringify(must.args) },
+            },
+            ...(calls ?? []),
+          ];
+          textRound = "";
+        } else if (held) {
+          for (const s of splitter.feed(held)) speak(s);
         }
         resp.fullText += textRound;
         if (!calls) break;
@@ -1266,8 +1361,9 @@ export class Assistant {
       if (markup.seen) {
         this.log(`⚠ tool-call markup in the model's text — dropped ${markup.droppedChars} chars`);
       }
-      for (const s of splitter.flush()) sentences.push(s);
-      let text = SentenceSplitter.clean(resp.fullText);
+      for (const s of splitter.flush()) speak(s);
+      if (markerSeen) this.log("⚠ model wrote an interruption marker — stripped before TTS");
+      let text = stripInterruptMarkers(SentenceSplitter.clean(resp.fullText));
       if (!text) {
         // Even the tool-less round came back empty. Silence is not an answer: speak a
         // line of our own, and keep the history off an empty assistant message (strict
@@ -1432,6 +1528,7 @@ export class Assistant {
   onSegmentStart(tag: string): void {
     if (this.resp !== null && tag) {
       this.resp.spoken.push(tag);
+      this.echo.noteSpoken(tag, now()); // local patch: echo guard
       this.onFirstAudio();
       this.emit({ type: "assistant", text: tag });
       this.refreshState();
@@ -1474,6 +1571,8 @@ export class Assistant {
   cancelResponse(interrupted: boolean, dropUser = false): void {
     const resp = this.resp;
     if (resp === null) return;
+    // local patch (sr-zh-1): log which path cancels a reply
+    this.log(`  ✂ reply cancelled (interrupted=${interrupted}) via ${(new Error().stack ?? "").split("\n").slice(2, 4).map((l) => l.trim()).join(" < ")}`);
     this.resp = null;
     resp.controller.abort();
     this.player.flush();

@@ -103,3 +103,21 @@ export function echoRatio(heard: string, spoken: string): number {
   if (!hw.length) return 1.0;
   return hw.filter((w) => sw.has(w)).length / hw.length;
 }
+
+/**
+ * local patch (sr-zh-1, 2026-11-26): the history marker of an interrupted reply
+ * ("… [interrupted by the user]", "[interrotto dall'utente]", "…before speaking") — the
+ * model copied it into its own answers (journal 06:05:13, 06:05:25). Matches the bracketed
+ * or parenthesised marker in either locale, with a leading ellipsis.
+ */
+const INTERRUPT_MARKER =
+  /\s*(?:…|\.\.\.)?\s*[[(]\s*(?:interrupted by the user|interrott[oa] dall['’]utente)[^\])]*[\])]/gi;
+
+export function hasInterruptMarker(text: string): boolean {
+  INTERRUPT_MARKER.lastIndex = 0;
+  return INTERRUPT_MARKER.test(text);
+}
+
+export function stripInterruptMarkers(text: string): string {
+  return text.replace(INTERRUPT_MARKER, "").trim();
+}

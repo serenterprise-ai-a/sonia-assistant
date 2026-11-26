@@ -28,7 +28,9 @@ describe("system prompt = persona file + the UI-activated skills", () => {
     a.skills = new Skills({ dir, dataDir });
     // the persona file comes first, verbatim — the skills block is appended after it
     const persona = fs.readFileSync(cfg.systemPromptFile, "utf-8").trim();
-    expect(a.systemPrompt.startsWith(persona)).toBe(true);
+    // local patch (sr-zh-1): the user-location block comes first, then the persona verbatim
+    expect(a.systemPrompt.split("\n\n").slice(1).join("\n\n").startsWith(persona)).toBe(true);
+    expect(a.systemPrompt.startsWith(t(cfg.locale, "prompt.locationTop").slice(0, 12))).toBe(true);
     expect(a.systemPrompt).toContain(BLOCK_MARK);
     expect(a.systemPrompt).toContain("- demo: A demo.");
     expect(a.systemPrompt).toContain("read_skill");
@@ -110,9 +112,9 @@ describe("the locale's language default is the last line of the prompt", () => {
     cfg.llmEnableTools = false;
     const a = new Assistant(cfg, null, "null");
     a.skills = new Skills({ dir, dataDir });
-    expect(a.systemPrompt.startsWith(fs.readFileSync(cfg.systemPromptFile, "utf-8").trim())).toBe(
-      true,
-    );
+    // local patch (sr-zh-1): after the user-location block
+    const afterTop = a.systemPrompt.split("\n\n").slice(1).join("\n\n");
+    expect(afterTop.startsWith(fs.readFileSync(cfg.systemPromptFile, "utf-8").trim())).toBe(true);
     expect(a.systemPrompt.endsWith(t("en", "prompt.langDefault"))).toBe(true);
     expect(a.systemPrompt).not.toContain(BLOCK_MARK);
   });

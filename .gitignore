@@ -47,3 +47,7 @@ models/
 *.swp
 .idea/
 .vscode/
+
+# local backups
+*.bak-*
+patches/

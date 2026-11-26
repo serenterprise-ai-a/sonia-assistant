@@ -96,9 +96,89 @@ export class SettingsStore {
   save(cfg: Config): void {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      writeJsonAtomic(this.file, captureSettings(cfg), 1);
+      // local patch: keep the keys this store does not own (`location`, set by voice)
+      writeJsonAtomic(this.file, { ...readRaw(this.file), ...captureSettings(cfg) }, 1);
     } catch {
       /* the setting holds for this session; the file survives as it was */
     }
   }
+}
+
+// ── local patch (sr-zh-1, 2026-11-26): the user's location ─────────────────────────────
+// Lives in the same `data/settings.json` under `location`; `set_user_location` writes it,
+// the system prompt, `get_weather` and `get_datetime` read it.
+
+export type UserLocation = {
+  city: string;
+  country: string;
+  timezone: string;
+  lat: number;
+  lon: number;
+};
+
+/** Default location when none is saved (data/settings.json `location`). */
+export const DEFAULT_LOCATION: UserLocation = {
+  city: "Bangkok",
+  country: "Thailand",
+  timezone: "Asia/Bangkok",
+  lat: 13.75398,
+  lon: 100.50144,
+};
+
+function readRaw(file: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return typeof v === "object" && v !== null && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function validTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The saved location, or the default when none (or an unusable one) is stored. */
+export function loadLocation(file: string): UserLocation {
+  const l = readRaw(file).location as Record<string, unknown> | undefined;
+  if (
+    l &&
+    typeof l.city === "string" &&
+    l.city.trim() &&
+    typeof l.lat === "number" &&
+    typeof l.lon === "number" &&
+    Number.isFinite(l.lat) &&
+    Number.isFinite(l.lon) &&
+    typeof l.timezone === "string" &&
+    validTimezone(l.timezone)
+  ) {
+    return {
+      city: l.city,
+      country: typeof l.country === "string" ? l.country : "",
+      timezone: l.timezone,
+      lat: l.lat,
+      lon: l.lon,
+    };
+  }
+  return { ...DEFAULT_LOCATION };
+}
+
+/** Persist the location, keeping every other key of the file as it is. */
+export function saveLocation(file: string, loc: UserLocation): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeJsonAtomic(file, { ...readRaw(file), location: loc }, 1);
+}
+
+
+/** Free-text personal context for the prompt (data/settings.json `userNote`); empty when unset. */
+export function userNote(file: string): string {
+  const v = readRaw(file).userNote;
+  return typeof v === "string" ? v.trim() : "";
 }

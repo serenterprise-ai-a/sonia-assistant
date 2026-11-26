@@ -10,9 +10,11 @@ import type { ToolPayload } from "./clients/toolcards";
 import { isSafeCommand, isSensitiveCommand } from "./command-policy";
 import type { TaskInfo } from "./events";
 import { detectLocale, intlLocale, type Locale, parseLocale, t } from "./i18n";
+import { loadLocation, saveLocation, type UserLocation } from "./settings";
 import { runShell } from "./shell-runner";
 import type { Skills } from "./skills";
 import { writeJsonAtomic } from "./util";
+import { geocode, getWeather, webSearch } from "./web-tools";
 
 export {
   isSafeCommand,
@@ -26,8 +28,58 @@ export const SCHEMAS: Record<string, unknown>[] = [
     type: "function",
     function: {
       name: "get_datetime",
-      description: "Current date and time.",
+      description: "Current date and time at the user's location.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  // ── local patch (sr-zh-1, 2026-11-26): web search, weather, user location ──
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "Searches the web and returns the top results (title, url, snippet). Use it for " +
+        "news, current events, prices, opening hours, facts you are not sure about — " +
+        "then answer from the results in one or two spoken sentences.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string", description: "What to search for" } },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_weather",
+      description:
+        "Current weather and today's forecast (temperature, conditions, high/low, chance " +
+        "of rain). Without a location it uses the user's current location.",
+      parameters: {
+        type: "object",
+        properties: {
+          location: {
+            type: "string",
+            description: "City, optionally with country ('Zurich, Switzerland'); omit for where the user is",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_user_location",
+      description:
+        "Saves the city the user is in now (they said they moved or are travelling): it " +
+        "becomes the default for the weather and the local time.",
+      parameters: {
+        type: "object",
+        properties: {
+          city: { type: "string", description: "City, optionally with country ('Lisbon, Portugal')" },
+        },
+        required: ["city"],
+      },
     },
   },
   {
@@ -227,7 +279,13 @@ export function argSummary(raw: string | undefined, max = 160): string {
  * and repeat-safe (`Tools.alreadyInContext` refuses the second one), a denial costs a
  * whole user round-trip.
  */
-export const GATE_EXEMPT_TOOLS: ReadonlySet<string> = new Set(["list_skills", "read_skill"]);
+export const GATE_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+  "list_skills",
+  "read_skill",
+  // local patch: read-only lookups, nothing is changed by them
+  "web_search",
+  "get_weather",
+]);
 
 /** One-line description of a tool by name — what the tool gate is shown. */
 export function toolDescription(name: string): string {
@@ -305,6 +363,8 @@ type ApproveFn = (command: string, reason: string) => Promise<boolean>;
 
 export class Tools {
   readonly notesPath: string;
+  /** local patch: `data/settings.json`, whose `location` key the location tools use. */
+  readonly settingsPath: string;
   /** UI language (LOCALE): a tool's result is shown on its card, so it is localized too. */
   readonly locale: Locale;
   /** Queue a line to say out of a turn; `key` is the task it belongs to, so that a newer
@@ -357,6 +417,7 @@ export class Tools {
     log?: (msg: string) => void;
   }) {
     this.notesPath = path.join(opts.dataDir, "notes.json");
+    this.settingsPath = path.join(opts.dataDir, "settings.json");
     fs.mkdirSync(path.dirname(this.notesPath), { recursive: true });
     this.announce = opts.announce;
     this.withdraw = opts.withdraw ?? null;
@@ -502,15 +563,31 @@ export class Tools {
       return t(this.locale, "tool.badArgs", { name });
     const args = parsed as Record<string, unknown>;
     if (name === "get_datetime") {
+      // local patch: the clock of the user's location, not of the server
+      const loc = this.location();
       const n = new Date();
       const date = new Intl.DateTimeFormat(intlLocale(this.locale), {
         weekday: "long",
         day: "numeric",
         month: "long",
         year: "numeric",
+        timeZone: loc.timezone,
       }).format(n);
-      const time = `${n.getHours()}:${String(n.getMinutes()).padStart(2, "0")}`;
-      return t(this.locale, "date.full", { date, time });
+      const time = new Intl.DateTimeFormat("en-GB", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: loc.timezone,
+      }).format(n);
+      return `${t(this.locale, "date.full", { date, time })} (${loc.city}, ${loc.timezone})`;
+    }
+    if (name === "web_search") {
+      return await webSearch(String(args.query ?? ""), signal);
+    }
+    if (name === "get_weather") {
+      return await getWeather(String(args.location ?? ""), this.location(), signal);
+    }
+    if (name === "set_user_location") {
+      return await this.setUserLocation(String(args.city ?? ""), signal);
     }
     if (name === "set_timer") {
       const secs = Math.max(1, Number(args.seconds ?? 60) || 60);
@@ -597,6 +674,42 @@ export class Tools {
       return await this.runCommand(String(args.command ?? ""), String(args.reason ?? ""), signal);
     }
     return t(this.locale, "tool.unknown", { name });
+  }
+
+  /** local patch: where the user is (data/settings.json `location`, default Bangkok). */
+  location(): UserLocation {
+    return loadLocation(this.settingsPath);
+  }
+
+  private async setUserLocation(city: string, signal?: AbortSignal): Promise<string> {
+    if (!city.trim()) return "set_user_location: no city given.";
+    let place: Awaited<ReturnType<typeof geocode>>;
+    try {
+      place = await geocode(city, signal);
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      return `set_user_location failed: the place lookup did not answer (${e instanceof Error ? e.message : e}).`;
+    }
+    if (!place) return `set_user_location: no place called «${city}» was found. Nothing was changed.`;
+    const loc: UserLocation = {
+      city: place.city,
+      country: place.country,
+      timezone: place.timezone,
+      lat: place.lat,
+      lon: place.lon,
+    };
+    try {
+      saveLocation(this.settingsPath, loc);
+    } catch (e) {
+      return `set_user_location failed: could not save (${e instanceof Error ? e.message : e}).`;
+    }
+    this.log?.(`📍 user location → ${loc.city}, ${loc.country} (${loc.timezone})`);
+    const time = new Intl.DateTimeFormat("en-GB", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: loc.timezone,
+    }).format(new Date());
+    return `Saved: the user is now in ${loc.city}${loc.country ? `, ${loc.country}` : ""} (time zone ${loc.timezone}, local time ${time}).`;
   }
 
   /**
