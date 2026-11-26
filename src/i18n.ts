@@ -91,7 +91,9 @@ const it = {
     "STRUMENTI DAL VIVO: hai davvero strumenti internet. Qualsiasi domanda sul meteo → " +
     "chiama get_weather (senza luogo usa quello dove si trova l'utente); notizie, fatti " +
     "attuali, prezzi, cose di cui non sei sicura, oppure «cerca» / «guarda» → chiama " +
-    "web_search. Non rispondere mai a memoria a queste domande e non inventare mai il " +
+    "web_search. Per leggere una pagina web (un indirizzo dato dall'utente o un risultato " +
+    "in dettaglio) → chiama browse_url. " +
+    "Non rispondere mai a memoria a queste domande e non inventare mai il " +
     "meteo.\n" +
     "REGOLA DI ONESTÀ: non dire mai che stai controllando, cercando o recuperando qualcosa " +
     "se non chiami uno strumento per farlo in questa stessa risposta: non esiste lavoro in " +
@@ -239,6 +241,8 @@ const en: Record<keyof typeof it, string> = {
     "LIVE TOOLS: you DO have live internet tools. Any question about the weather → call " +
     "get_weather (without a location it uses where the user is); news, current events, " +
     "prices, facts you are not sure about, or 'search' / 'look up' → call web_search. " +
+    "To read a web page (an address the user gives, or a search result in detail) → call " +
+    "browse_url. " +
     "Never answer those from memory and never guess the weather.\n" +
     "HONESTY RULE: never say you are checking, searching, retrieving or looking something " +
     "up unless you call a tool for it in this same reply: there is no background work, " +

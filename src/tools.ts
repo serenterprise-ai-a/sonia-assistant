@@ -14,7 +14,7 @@ import { loadLocation, saveLocation, type UserLocation } from "./settings";
 import { runShell } from "./shell-runner";
 import type { Skills } from "./skills";
 import { writeJsonAtomic } from "./util";
-import { geocode, getWeather, webSearch } from "./web-tools";
+import { browseUrl, geocode, getWeather, webSearch } from "./web-tools";
 
 export {
   isSafeCommand,
@@ -45,6 +45,21 @@ export const SCHEMAS: Record<string, unknown>[] = [
         type: "object",
         properties: { query: { type: "string", description: "What to search for" } },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browse_url",
+      description:
+        "Opens one public web page and returns its text. Use it when the user gives a web " +
+        "address or asks to read/open a page, or to read a result from web_search in more " +
+        "detail. Then answer from the text in one or two spoken sentences.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "The page address, e.g. https://example.com/news" } },
+        required: ["url"],
       },
     },
   },
@@ -285,6 +300,7 @@ export const GATE_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   // local patch: read-only lookups, nothing is changed by them
   "web_search",
   "get_weather",
+  "browse_url",
 ]);
 
 /** One-line description of a tool by name — what the tool gate is shown. */
@@ -582,6 +598,9 @@ export class Tools {
     }
     if (name === "web_search") {
       return await webSearch(String(args.query ?? ""), signal);
+    }
+    if (name === "browse_url") {
+      return await browseUrl(String(args.url ?? ""), signal);
     }
     if (name === "get_weather") {
       return await getWeather(String(args.location ?? ""), this.location(), signal);

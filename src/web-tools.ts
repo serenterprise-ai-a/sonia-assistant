@@ -10,6 +10,8 @@
  * failure is a sentence, never a thrown turn.
  */
 
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import type { UserLocation } from "./settings";
 
 export const SEARXNG_URL = (process.env.SEARXNG_URL ?? "http://127.0.0.1:8888").replace(/\/+$/, "");
@@ -257,4 +259,119 @@ export function forcedTool(text: string): { name: string; args: Record<string, s
   const w = weatherIntent(text);
   if (w) return { name: "get_weather", args: w as Record<string, string> };
   return null;
+}
+
+// ── browse_url (local patch, 2026-11-26) ──
+// Reads one public web page as plain text. Only http(s) to public hosts: loopback, LAN,
+// link-local, CGNAT/Tailscale (100.64/10), *.ts.net and *.local are refused, and every
+// redirect hop is checked again, so the model cannot be pointed at the router, the
+// tailnet or this box's own services.
+
+
+const BROWSE_MAX_BYTES = 2_000_000;
+const BROWSE_MAX_CHARS = 4_000;
+const BROWSE_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
+
+export function isPrivateIp(ip: string): boolean {
+  if (isIP(ip) === 6) {
+    const v = ip.toLowerCase();
+    if (v === "::1" || v === "::") return true;
+    if (v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80")) return true;
+    const m = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    return m ? isPrivateIp(m[1]!) : false;
+  }
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = p as [number, number, number, number];
+  return (
+    a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) || a >= 224
+  );
+}
+
+type Resolver = (host: string) => Promise<string[]>;
+const defaultResolve: Resolver = async (host) => (await lookup(host, { all: true })).map((r) => r.address);
+
+export async function checkPublicUrl(raw: string, resolve: Resolver = defaultResolve): Promise<URL | string> {
+  let u: URL;
+  try {
+    u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`);
+  } catch {
+    return "that is not a valid web address";
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return "only http and https pages can be opened";
+  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!host || host === "localhost" || host.endsWith(".local") || host.endsWith(".ts.net") || host.endsWith(".internal"))
+    return "private addresses cannot be opened";
+  let ips: string[];
+  try {
+    ips = isIP(host) ? [host] : await resolve(host);
+  } catch {
+    return `the site ${host} could not be found`;
+  }
+  if (!ips.length || ips.some(isPrivateIp)) return "private addresses cannot be opened";
+  return u;
+}
+
+export function htmlToText(html: string): { title: string; text: string } {
+  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
+  let body = html
+    .replace(/<(script|style|noscript|svg|nav|footer|header|form|iframe|template)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+  const ent: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+  const dec = (s: string) =>
+    s
+      .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+      .replace(/&([a-z]+);/gi, (m, n) => ent[n.toLowerCase()] ?? m);
+  body = dec(body)
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter((l) => l.length > 0)
+    .join("\n");
+  return { title: dec(title).replace(/\s+/g, " "), text: body };
+}
+
+export async function browseUrl(
+  raw: string,
+  signal?: AbortSignal,
+  f: FetchFn = fetch,
+  resolve: Resolver = defaultResolve,
+): Promise<string> {
+  if (!raw.trim()) return "browse_url: no address given.";
+  let url: URL | string = await checkPublicUrl(raw, resolve);
+  for (let hop = 0; hop < 4; hop++) {
+    if (typeof url === "string") return `browse_url refused: ${url}.`;
+    let r: Response;
+    try {
+      r = await f(url.toString(), {
+        signal: withTimeout(signal),
+        redirect: "manual",
+        headers: { "User-Agent": BROWSE_UA, Accept: "text/html,text/plain;q=0.9,*/*;q=0.5" },
+      });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      return `browse_url failed: ${url.hostname} did not answer (${e instanceof Error ? e.message : e}).`;
+    }
+    if (r.status >= 300 && r.status < 400 && r.headers.get("location")) {
+      url = await checkPublicUrl(new URL(r.headers.get("location")!, url).toString(), resolve);
+      continue;
+    }
+    if (!r.ok) return `browse_url: ${url.hostname} answered HTTP ${r.status}; the page could not be read (it may block automated readers).`;
+    const type = (r.headers.get("content-type") ?? "").toLowerCase();
+    if (!type.includes("html") && !type.startsWith("text/"))
+      return `browse_url: ${url.toString()} is not a readable page (${type || "unknown type"}).`;
+    const buf = new Uint8Array(await r.arrayBuffer()).slice(0, BROWSE_MAX_BYTES);
+    const src = new TextDecoder().decode(buf);
+    const { title, text } = type.includes("html") ? htmlToText(src) : { title: "", text: src.trim() };
+    if (text.length < 80)
+      return `browse_url: ${url.hostname} returned almost no text (the page probably needs JavaScript). Use web_search instead.`;
+    const body = text.length > BROWSE_MAX_CHARS ? `${text.slice(0, BROWSE_MAX_CHARS - 1)}…` : text;
+    return `Page ${url.toString()}${title ? ` «${title}»` : ""} (answer from this text, name the site briefly):\n${body}`;
+  }
+  return "browse_url: too many redirects.";
 }
