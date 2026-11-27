@@ -252,12 +252,28 @@ export function searchIntent(text: string): { query: string } | null {
   return query.length >= 3 ? { query } : null;
 }
 
+// "check for X" / "find out whether X" / "controlla se X": softer than an explicit search
+// request, so a weather question still wins over it. Journal 2026-11-26 23:56:02: «…you
+// should check for Black Friday sale for Index Living Mall in Thailand» → the model said
+// "I'll check … right away" and called nothing until the user asked again.
+const CHECK =
+  /\b(?:check(?: for| if| whether| on| out)?|find out(?: about| if| whether)?|controlla(?: se)?|verifica(?: se)?)\s+(.{3,})$/iu;
+
+export function checkIntent(text: string): { query: string } | null {
+  const m = CHECK.exec(text.trim());
+  if (!m) return null;
+  const query = m[1]!.replace(/^(?:the|about|for|on|if|whether)\s+/i, "").replace(/[?.!]+$/, "").trim();
+  return query.length >= 3 ? { query } : null;
+}
+
 /** The tool a request plainly asks for (the harness' safety net), if any. */
 export function forcedTool(text: string): { name: string; args: Record<string, string> } | null {
   const s = searchIntent(text);
   if (s) return { name: "web_search", args: s };
   const w = weatherIntent(text);
   if (w) return { name: "get_weather", args: w as Record<string, string> };
+  const c = checkIntent(text);
+  if (c) return { name: "web_search", args: c };
   return null;
 }
 
