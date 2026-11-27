@@ -217,11 +217,15 @@ const WEATHER = new RegExp(
   "\\b(?:weather|forecast|meteo|che tempo fa|previsioni del tempo|" +
     "how (?:hot|cold|warm) is it|is it (?:hot|cold|raining|sunny|going to rain)|" +
     "will it (?:rain|snow)|going to rain|chance of rain|temperature (?:outside|today|now|in)|" +
-    "piover[àa]|sta piovendo|fa (?:caldo|freddo))(?![\\p{L}\\d])",
+    "piover[àa]|sta piovendo|fa (?:caldo|freddo)|" +
+    // de / fr / es (2026-11-27: «und wie ist das Wetter morgen?» got four "I'll check" and no call)
+    "wetter|wettervorhersage|regnet es|wird es regnen|wie (?:warm|kalt) ist es|" +
+    "m[ée]t[ée]o|quel temps|va-t-il pleuvoir|il pleut|" +
+    "el tiempo|qu[ée] tiempo|pron[óo]stico|va a llover|est[áa] lloviendo)(?![\\p{L}\\d])",
   "iu",
 );
 const PLACE =
-  /\b(?:in|at|for|a|ad)\s+(\p{Lu}[\p{L}'’-]*(?:[ ,]+\p{Lu}[\p{L}'’-]*)*)/u;
+  /(?:^|[^\p{L}])(?:in|at|for|a|ad|à|en)\s+(\p{Lu}[\p{L}'’-]*(?:[ ,]+\p{Lu}[\p{L}'’-]*)*)/u;
 
 /**
  * A plain weather question ("what's the weather like?", "how hot is it in Dubai?") →
@@ -257,7 +261,7 @@ export function searchIntent(text: string): { query: string } | null {
 // should check for Black Friday sale for Index Living Mall in Thailand» → the model said
 // "I'll check … right away" and called nothing until the user asked again.
 const CHECK =
-  /\b(?:check(?: for| if| whether| on| out)?|find out(?: about| if| whether)?|controlla(?: se)?|verifica(?: se)?)\s+(.{3,})$/iu;
+  /\b(?:check(?: for| if| whether| on| out)?|find out(?: about| if| whether)?|controlla(?: se)?|verifica(?: se)?|schau (?:mal )?nach(?:,)?(?: ob)?|pr[üu]f(?:e)?(?: mal)?(?: ob)?|v[ée]rifie(?: si)?|comprueba(?: si)?|mira si)\s+(.{3,})$/iu;
 
 export function checkIntent(text: string): { query: string } | null {
   const m = CHECK.exec(text.trim());
@@ -284,7 +288,7 @@ export function forcedTool(
 // these specific stores…» is a question about an earlier answer, not a request, and the
 // model's correct answer was dropped for a needless search.
 const CLAIMS_LOOKUP =
-  /\b(?:I'?ll|I will|let me|I'?m going to|I am going to|I'?m)\s+(?:now\s+)?(?:check|search|look(?:ing)? (?:it )?up|look(?:ing)? for|find|browse|checking|searching)\b|\bright away\b|\bone moment\b|\bcontrollo subito\b|\bcerco subito\b/i;
+  /\b(?:I['’]?ll|I will|let me|I['’]?m going to|I am going to|I['’]?m)\s+(?:now\s+)?(?:check|search|look(?:ing)? (?:it )?up|look(?:ing)? for|find|browse|checking|searching)\b|\bright away\b|\bone moment\b|\bcontrollo subito\b|\bcerco subito\b|\bich (?:schaue?|pr[üu]fe|suche) (?:kurz |gleich |sofort )?(?:nach|das)?\b|\bje (?:v[ée]rifie|cherche)\b|\bvoy a (?:buscar|comprobar|mirar)\b/i;
 
 export function claimsLookup(text: string): boolean {
   return CLAIMS_LOOKUP.test(text);

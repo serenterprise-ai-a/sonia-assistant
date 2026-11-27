@@ -27,7 +27,7 @@ import { Logger } from "../log";
 import { loadLocation, userNote } from "../settings";
 import { type SkillInfo, Skills } from "../skills";
 import { argSummary, GATE_EXEMPT_TOOLS, Tools, toolDescription } from "../tools";
-import { claimsLookup, forcedTool } from "../web-tools";
+import { claimsLookup, forcedTool, weatherIntent } from "../web-tools";
 import { SileroVAD } from "../vad";
 import { ChatStore, type RestoredChat } from "./chat-store";
 import { AsyncQueue, abortableIter, abortableSleep, isAbortError, now, withAbort } from "./queues";
@@ -1309,6 +1309,26 @@ export class Assistant {
           textRound = "";
         } else if (held) {
           for (const s of splitter.feed(held)) speak(s);
+        }
+        // local patch (2026-11-27): a reply that claims a lookup ("I'll check … right away")
+        // but calls no tool gets the call made for it, even when the request matched no
+        // intent. Journal 05:55–05:59: «und wie ist das Wetter morgen?» → four such replies.
+        if (!calls?.length && !must && offer && claimsLookup(textRound)) {
+          const wu = weatherIntent(resp.userText);
+          const wt = weatherIntent(textRound);
+          const w = wu || wt ? { ...(wt ?? {}), ...(wu?.location ? wu : {}) } : null;
+          const name = w ? "get_weather" : "web_search";
+          if (offer.some((t) => (t.function as { name?: string })?.name === name)) {
+            const args = w ?? { query: resp.userText };
+            this.log(`   🧭 claimed a lookup without calling a tool — calling ${name} ${JSON.stringify(args)}`);
+            calls = [
+              {
+                id: `auto-${name}-${Date.now()}`,
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ];
+          }
         }
         resp.fullText += textRound;
         if (!calls) break;
