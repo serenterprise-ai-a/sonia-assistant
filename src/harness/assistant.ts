@@ -1313,7 +1313,9 @@ export class Assistant {
         // local patch (2026-11-27): a reply that claims a lookup ("I'll check … right away")
         // but calls no tool gets the call made for it, even when the request matched no
         // intent. Journal 05:55–05:59: «und wie ist das Wetter morgen?» → four such replies.
-        if (!calls?.length && !must && offer && claimsLookup(textRound)) {
+        // only once per reply, and only before any tool ran (journal 2026-11-27 13:05: it
+        // re-fired every round and looped get_weather until the round limit)
+        if (round === 1 && !calls?.length && !must && offer && claimsLookup(textRound)) {
           const wu = weatherIntent(resp.userText);
           const wt = weatherIntent(textRound);
           const w = wu || wt ? { ...(wt ?? {}), ...(wu?.location ? wu : {}) } : null;

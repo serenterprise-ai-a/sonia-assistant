@@ -186,7 +186,7 @@ export async function getWeather(
     `${FORECAST_URL}?latitude=${place.lat}&longitude=${place.lon}` +
     "&current=temperature_2m,apparent_temperature,weather_code,relative_humidity_2m,wind_speed_10m" +
     "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code" +
-    "&timezone=auto&forecast_days=1";
+    "&timezone=auto&forecast_days=3";
   let d: Record<string, Record<string, unknown>>;
   try {
     d = (await getJson(url, signal, f)) as typeof d;
@@ -200,14 +200,25 @@ export async function getWeather(
   const localTime = String(c.time ?? "").split("T")[1] ?? "";
   const name = [place.city, place.country].filter(Boolean).join(", ");
   const rain = first("precipitation_probability_max");
+  // local patch (2026-11-27): «wie ist das Wetter morgen?» — the model kept answering
+  // "tomorrow's forecast isn't available yet" because only today was returned.
+  const at = (k: string, i: number) => (Array.isArray(day[k]) ? (day[k] as unknown[])[i] : undefined);
+  const dayLine = (label: string, i: number) => {
+    if (at("temperature_2m_max", i) === undefined) return "";
+    const p = at("precipitation_probability_max", i);
+    return ` ${label}: high ${r0(at("temperature_2m_max", i))} °C, low ${r0(at("temperature_2m_min", i))} °C, ` +
+      `${weatherWords(at("weather_code", i))}, chance of rain ${p === undefined || p === null ? "unknown" : `${r0(p)}%`}.`;
+  };
   return (
     `Weather in ${name}${localTime ? ` (local time ${localTime})` : ""}: ` +
     `${r0(c.temperature_2m)} °C, feels like ${r0(c.apparent_temperature)} °C, ` +
     `${weatherWords(c.weather_code)}, humidity ${r0(c.relative_humidity_2m)}%, ` +
     `wind ${r0(c.wind_speed_10m)} km/h. ` +
     `Today: high ${r0(first("temperature_2m_max"))} °C, low ${r0(first("temperature_2m_min"))} °C, ` +
-    `${weatherWords(first("weather_code"))}, chance of rain ${rain === undefined || rain === null ? "unknown" : `${r0(rain)}%`}. ` +
-    "(Source: Open-Meteo.)"
+    `${weatherWords(first("weather_code"))}, chance of rain ${rain === undefined || rain === null ? "unknown" : `${r0(rain)}%`}.` +
+    dayLine("Tomorrow", 1) +
+    dayLine("Day after tomorrow", 2) +
+    " (Source: Open-Meteo.)"
   );
 }
 
