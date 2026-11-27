@@ -408,6 +408,12 @@
         <option value="ask" data-i18n="opt.ask">chiedi</option><option value="auto" data-i18n="opt.auto">auto</option><option value="off" data-i18n="opt.off">off</option>
       </select>
     </label>
+    <label class="row col" data-i18n-title="set.asr.title" title="Lingua che il riconoscimento vocale si aspetta; vale dalla prossima frase">
+      <span class="txt"><span data-i18n="set.asr">lingua parlata</span><small data-i18n="set.asr.sub">auto = riconosce da sola, a ogni frase</small></span>
+      <select id="asrLangSel" data-i18n-title="set.asr.title" title="Lingua che il riconoscimento vocale si aspetta; vale dalla prossima frase">
+        <option value="" data-i18n="opt.auto">auto</option><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="it">Italiano</option><option value="es">Español</option>
+      </select>
+    </label>
     <label class="row col" data-i18n-title="set.turn.title" title="Quanto chiedo all'LLM se hai finito di parlare, quando il silenzio da solo non basta">
       <span class="txt"><span data-i18n="set.turn">fine turno</span><small data-i18n="set.turn.sub">quanto chiedo all'LLM se hai finito</small></span>
       <select id="decisionSel">
@@ -1191,6 +1197,7 @@ function connect() {
         fillModels(ev.models || [], ev.model, ev.config.llm_via_pi);
         $("piChk").checked = !!ev.config.llm_via_pi;
         $("cmdSel").value = ev.config.cmd_mode || "auto";
+        $("asrLangSel").value = ev.config.asr_language ?? "";
         $("bargeChk").checked = ev.config.barge_in;
         $("halfChk").checked = ev.config.half_duplex;
         $("thinkChk").checked = !!ev.config.thinking;
@@ -1418,6 +1425,7 @@ $("halfChk").onchange = (e) => setConfig("half_duplex", e.target.checked);
 $("aecChk").onchange = (e) => routePlayback(e.target.checked);
 $("thinkChk").onchange = (e) => setConfig("thinking", e.target.checked);
 $("cmdSel").onchange = (e) => setConfig("cmd_mode", e.target.value);
+$("asrLangSel").onchange = (e) => setConfig("asr_language", e.target.value);
 $("decisionSel").onchange = (e) => setConfig("decision_mode", e.target.value);
 $("voiceSel").onchange = (e) => setConfig("tts_voice", e.target.value);
 $("piChk").onchange = (e) => setConfig("llm_via_pi", e.target.checked);

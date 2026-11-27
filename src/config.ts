@@ -20,6 +20,17 @@ export const PI_DEFAULT_MODEL = "llamacpp/Qwen3.5-4B-MTP-Q4_K_M";
  *  spellings must never pass through. */
 export const CMD_MODES = ["off", "ask", "auto"] as const;
 export type CmdMode = (typeof CMD_MODES)[number];
+/** The spoken languages the ASR hint accepts ("" = let Voxtral detect per utterance). */
+export const ASR_LANGUAGES = ["", "en", "de", "fr", "it", "es"] as const;
+export type AsrLanguage = (typeof ASR_LANGUAGES)[number];
+
+/** Exact match after trim + lowercase; `null` = not an allowed value (or not a string). */
+export function parseAsrLanguage(raw: unknown): AsrLanguage | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  return (ASR_LANGUAGES as readonly string[]).includes(v) ? (v as AsrLanguage) : null;
+}
+
 export const DECISION_MODES = ["off", "auto", "always"] as const;
 export type DecisionMode = (typeof DECISION_MODES)[number];
 
@@ -301,6 +312,11 @@ export class Config {
     // ask the judge" in the turn rules), so this is the only place the typo can be caught.
     cfg.cmdMode = normalizeCmdMode(cfg.cmdMode, log);
     cfg.decisionMode = normalizeDecisionMode(cfg.decisionMode, log);
+    const asr = parseAsrLanguage(cfg.asrLanguage);
+    if (asr === null) {
+      log(`⚠ ASR_LANGUAGE=${cfg.asrLanguage} is none of auto|en|de|fr|it|es — using auto-detect`);
+      cfg.asrLanguage = "";
+    } else cfg.asrLanguage = asr;
     // A typo'd pack name silently serves no GGUF (the audio server starts with an
     // unknown `language`, the voices dir resolves to nothing). Named packs only; a
     // custom TTS_VOICE_DIR may want whatever it wants.

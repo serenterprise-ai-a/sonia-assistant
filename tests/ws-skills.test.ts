@@ -37,6 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
 import { pcm16ToWavBytes } from "../src/audio/wav";
+import { LiveTranscription } from "../src/clients/audiocpp";
 import { Config } from "../src/config";
 import { WebApp } from "../src/web";
 
@@ -270,6 +271,7 @@ describe("skills over /ws (hello → skills_set → skills_refresh)", () => {
     // the block-scalar description is folded into a single line for the UI tooltip
     expect(hello.skills[1]!.description).toBe("Second skill, wrapped.");
     expect(hello.config.cmd_mode).toBe("auto");
+    expect(hello.config.asr_language).toBe("");
   });
 
   test("skills_set flips the flags, broadcasts them and persists them", async () => {
@@ -596,6 +598,58 @@ describe("the drawer's commands", () => {
       cmdMode: "ask",
       llmDisableThinking: false,
     });
+  });
+
+  test("asr_language: validated, applied per utterance, persisted, logged once", async () => {
+    const a = f.app.assistant;
+    const cfg = a.cfg;
+    const lines: string[] = [];
+    const prevLog = a.log;
+    a.log = (m: string) => void lines.push(m);
+    const settle = () => sleep(150);
+    const stored = () => JSON.parse(fs.readFileSync(path.join(dataDir, "settings.json"), "utf-8"));
+    const urlPath = () =>
+      (
+        new LiveTranscription(cfg.asrUrl, cfg.asrModel, cfg.asrLanguage, () => {}) as unknown as {
+          path: string;
+        }
+      ).path;
+    try {
+      expect(cfg.asrLanguage).toBe("");
+      expect(urlPath()).not.toContain("language=");
+
+      f.ws.send(JSON.stringify({ type: "config", asr_language: "DE" }));
+      await settle();
+      expect(cfg.asrLanguage).toBe("de"); // no reconnect needed
+      expect(urlPath()).toContain("language=de");
+      expect(stored().asrLanguage).toBe("de");
+      expect(lines.filter((l) => l.startsWith("🌐")).length).toBe(1);
+      expect(lines).toContain("🌐 ASR language → de (was auto)");
+
+      // a no-op resend logs nothing new
+      f.ws.send(JSON.stringify({ type: "config", asr_language: "de" }));
+      await settle();
+      expect(lines.filter((l) => l.startsWith("🌐")).length).toBe(1);
+
+      // junk (and a non-string) leaves the pick alone and warns
+      f.ws.send(JSON.stringify({ type: "config", asr_language: "xx" }));
+      f.ws.send(JSON.stringify({ type: "config", asr_language: 42 }));
+      await settle();
+      expect(cfg.asrLanguage).toBe("de");
+      expect(lines.some((l) => l.includes('⚠ config: asr_language="xx"'))).toBe(true);
+      expect(lines.some((l) => l.includes("asr_language=42"))).toBe(true);
+      expect(lines.some((l) => l.includes("asr=de"))).toBe(true);
+
+      // other keys of the file survive, and "" returns to auto
+      f.ws.send(JSON.stringify({ type: "config", asr_language: "" }));
+      await settle();
+      expect(cfg.asrLanguage).toBe("");
+      expect(stored().asrLanguage).toBe("");
+      expect(stored().cmdMode).toBeDefined();
+      expect(lines).toContain("🌐 ASR language → auto (was de)");
+    } finally {
+      a.log = prevLog;
+    }
   });
 
   test("approve resolves a pending command, and a stale id is refused", async () => {
