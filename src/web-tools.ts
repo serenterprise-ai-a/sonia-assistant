@@ -267,14 +267,27 @@ export function checkIntent(text: string): { query: string } | null {
 }
 
 /** The tool a request plainly asks for (the harness' safety net), if any. */
-export function forcedTool(text: string): { name: string; args: Record<string, string> } | null {
+export function forcedTool(
+  text: string,
+): { name: string; args: Record<string, string>; soft?: boolean } | null {
   const s = searchIntent(text);
   if (s) return { name: "web_search", args: s };
   const w = weatherIntent(text);
   if (w) return { name: "get_weather", args: w as Record<string, string> };
   const c = checkIntent(text);
-  if (c) return { name: "web_search", args: c };
+  if (c) return { name: "web_search", args: c, soft: true };
   return null;
+}
+
+// A "soft" forced tool (the "check for X" phrasing) is only forced when the model's held
+// text claims a lookup it did not make. Journal 2026-11-27 04:59: «why did you check for
+// these specific stores…» is a question about an earlier answer, not a request, and the
+// model's correct answer was dropped for a needless search.
+const CLAIMS_LOOKUP =
+  /\b(?:I'?ll|I will|let me|I'?m going to|I am going to|I'?m)\s+(?:now\s+)?(?:check|search|look(?:ing)? (?:it )?up|look(?:ing)? for|find|browse|checking|searching)\b|\bright away\b|\bone moment\b|\bcontrollo subito\b|\bcerco subito\b/i;
+
+export function claimsLookup(text: string): boolean {
+  return CLAIMS_LOOKUP.test(text);
 }
 
 // ── browse_url (local patch, 2026-11-26) ──

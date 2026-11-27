@@ -27,7 +27,7 @@ import { Logger } from "../log";
 import { loadLocation, userNote } from "../settings";
 import { type SkillInfo, Skills } from "../skills";
 import { argSummary, GATE_EXEMPT_TOOLS, Tools, toolDescription } from "../tools";
-import { forcedTool } from "../web-tools";
+import { claimsLookup, forcedTool } from "../web-tools";
 import { SileroVAD } from "../vad";
 import { ChatStore, type RestoredChat } from "./chat-store";
 import { AsyncQueue, abortableIter, abortableSleep, isAbortError, now, withAbort } from "./queues";
@@ -1294,7 +1294,7 @@ export class Assistant {
           textRound += tail;
           say(tail);
         }
-        if (must && !calls?.length) {
+        if (must && !calls?.length && (!must.soft || claimsLookup(held))) {
           this.log(
             `   🧭 ${must.name} asked for but not called — calling it (dropped: «${held.trim().slice(0, 80)}»)`,
           );

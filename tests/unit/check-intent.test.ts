@@ -21,3 +21,21 @@ describe("checkIntent / forcedTool (check for …)", () => {
     expect(forcedTool("tell me a story")).toBeNull();
   });
 });
+
+import { claimsLookup } from "../../src/web-tools";
+
+describe("soft check intent (2026-11-27 04:59 false positive)", () => {
+  test("'why did you check for …' is soft and the real answer does not claim a lookup", () => {
+    const f = forcedTool("My question was, why did you check for these specific stores and not others? decision-making process behind that.");
+    expect(f?.soft).toBe(true);
+    expect(claimsLookup("I chose major, reputable online retailers with clear pricing, delivery options.")).toBe(false);
+  });
+  test("an empty promise does claim a lookup", () => {
+    expect(claimsLookup("I'll check the Black Friday sale at Index Living Mall right away.")).toBe(true);
+    expect(claimsLookup("Let me search for that.")).toBe(true);
+  });
+  test("explicit search and weather stay hard", () => {
+    expect(forcedTool("search the web for Lisbon tram strikes")?.soft).toBeUndefined();
+    expect(forcedTool("check the weather in Lisbon")?.soft).toBeUndefined();
+  });
+});
