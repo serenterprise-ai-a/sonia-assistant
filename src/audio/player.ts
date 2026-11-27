@@ -26,6 +26,8 @@ export class Player {
 
   writer: Writer | null = null; // used when sink == "callback"
   onFlush: (() => void) | null = null;
+  /** local patch (CHO-1423): tells the client to pause/resume audio it already buffered */
+  onPauseChange: ((paused: boolean) => void) | null = null;
   onSegmentStart: ((tag: string) => void) | null = null;
   onFirstAudio: (() => void) | null = null;
   onIdle: (() => void) | null = null;
@@ -127,19 +129,23 @@ export class Player {
   }
 
   pause(): void {
+    if (!this.paused) this.onPauseChange?.(true);
     this.paused = true;
   }
 
   resume(): void {
+    if (this.paused) this.onPauseChange?.(false);
     this.paused = false;
     this.wake.set();
   }
 
   flush(): void {
+    const wasPaused = this.paused;
     this.queue.length = 0;
     this.paused = false;
     this.wake.set();
     this.onFlush?.(); // drop audio already buffered on the client
+    if (wasPaused) this.onPauseChange?.(false); // local patch (CHO-1423): never leave the client paused
   }
 
   get busy(): boolean {

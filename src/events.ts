@@ -108,6 +108,7 @@ export type ServerEvent =
   | { type: "latency"; first_token_ms: number; first_audio_ms: number }
   | { type: "context"; used: number; total: number } // context bar: tokens used / n_ctx
   | { type: "flush" }
+  | { type: "playback"; action: "pause" | "resume" }
   | { type: "chat_reset" } // 🧹 ack: everything sent before this belongs to the erased chat
   /**
    * Another window opened the app and took the single client slot: this page is now a

@@ -547,6 +547,9 @@ export class WebApp {
     a.emit = (ev) => this.sendJson(ev);
     a.player.writer = (pcm) => this.send(pcm);
     a.player.onFlush = () => this.sendJson({ type: "flush" });
+    // local patch (CHO-1423): the app buffers up to ~0.8 s; pause it on barge-in too
+    a.player.onPauseChange = (paused) =>
+      this.sendJson({ type: "playback", action: paused ? "pause" : "resume" });
 
     this.wss = new WebSocketServer({
       noServer: true,
