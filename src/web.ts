@@ -16,7 +16,13 @@ import net from "node:net";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
 import { QueueMic } from "./audio/mic";
-import { type Config, normalizeCmdMode, normalizeDecisionMode, ROOT } from "./config";
+import {
+  type Config,
+  normalizeCmdMode,
+  normalizeDecisionMode,
+  parseAsrLanguage,
+  ROOT,
+} from "./config";
 import type { ClientCommand, ServerEvent } from "./events";
 import { Harness } from "./harness/harness";
 import { now } from "./harness/queues";
@@ -332,6 +338,7 @@ export class WebApp {
         barge_in: this.cfg.bargeIn,
         decision_mode: this.cfg.decisionMode,
         cmd_mode: this.cfg.cmdMode,
+        asr_language: this.cfg.asrLanguage,
         llm_via_pi: this.cfg.llmViaPi,
         thinking: !this.cfg.llmDisableThinking,
       },
@@ -464,6 +471,20 @@ export class WebApp {
       cfg.cmdMode = mode;
       a.tools.cmdMode = mode;
     }
+    if (cmd.asr_language !== undefined) {
+      // unlike cmd_mode: junk never falls back to a default — it must not clear a German pick
+      const lang = parseAsrLanguage(cmd.asr_language);
+      if (lang === null) {
+        a.log(
+          `⚠ config: asr_language=${JSON.stringify(cmd.asr_language)} is none of ` +
+            `auto|en|de|fr|it|es — unchanged`,
+        );
+      } else if (lang !== cfg.asrLanguage) {
+        const was = cfg.asrLanguage;
+        cfg.asrLanguage = lang; // read per utterance in Harness.startUtterance
+        a.log(`🌐 ASR language → ${lang || "auto"} (was ${was || "auto"})`);
+      }
+    }
     if (typeof cmd.llm_via_pi === "boolean" && cmd.llm_via_pi !== cfg.llmViaPi) {
       cfg.llmViaPi = cmd.llm_via_pi;
       a.llm.onModeChange();
@@ -480,7 +501,7 @@ export class WebApp {
     a.log(
       `⚙ config: half_duplex=${cfg.halfDuplex} barge_in=${cfg.bargeIn} ` +
         `decision=${cfg.decisionMode} commands=${cfg.cmdMode} ` +
-        `thinking=${!cfg.llmDisableThinking} ` +
+        `thinking=${!cfg.llmDisableThinking} asr=${cfg.asrLanguage || "auto"} ` +
         `llm=${cfg.llmViaPi ? `pi ${cfg.piCmd}` : "api"}`,
     );
   }

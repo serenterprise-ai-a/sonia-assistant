@@ -11,7 +11,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Config } from "../../src/config";
+import { Config, parseAsrLanguage } from "../../src/config";
 import { captureSettings, SettingsStore } from "../../src/settings";
 
 const dirs: string[] = [];
@@ -54,6 +54,7 @@ describe("SettingsStore", () => {
       cmdMode: "ask",
       llmViaPi: true,
       llmDisableThinking: false,
+      asrLanguage: "",
     });
   });
 
@@ -96,5 +97,52 @@ describe("SettingsStore", () => {
     const cfg = Config.fromEnv();
     cfg.bargeIn = false;
     expect(() => s.save(cfg)).not.toThrow();
+  });
+});
+
+describe("asr language", () => {
+  test("parseAsrLanguage accepts the allowed set and rejects the rest", () => {
+    for (const v of ["", "en", "de", "fr", "it", "es"])
+      expect(parseAsrLanguage(v)).toBe(v as never);
+    expect(parseAsrLanguage("DE")).toBe("de");
+    expect(parseAsrLanguage(" en ")).toBe("en");
+    for (const v of ["xx", "th", "ja", 42, null, undefined]) expect(parseAsrLanguage(v)).toBeNull();
+  });
+
+  test("ASR_LANGUAGE env: junk warns and falls back to auto, valid passes", () => {
+    const prev = process.env.ASR_LANGUAGE;
+    try {
+      const logs: string[] = [];
+      process.env.ASR_LANGUAGE = "th";
+      expect(Config.fromEnv((m) => logs.push(m)).asrLanguage).toBe("");
+      expect(logs.some((l) => l.includes("ASR_LANGUAGE=th"))).toBe(true);
+      process.env.ASR_LANGUAGE = "DE";
+      expect(Config.fromEnv(() => {}).asrLanguage).toBe("de");
+    } finally {
+      if (prev === undefined) delete process.env.ASR_LANGUAGE;
+      else process.env.ASR_LANGUAGE = prev;
+    }
+  });
+
+  test("persisted, restored, invalid stored value ignored, other keys kept", () => {
+    const s = store();
+    fs.writeFileSync(s.file, JSON.stringify({ location: { city: "X" }, userNote: "n" }));
+    const a = Config.fromEnv();
+    a.asrLanguage = "de";
+    s.save(a);
+    const raw = JSON.parse(fs.readFileSync(s.file, "utf-8"));
+    expect(raw.asrLanguage).toBe("de");
+    expect(raw.location).toEqual({ city: "X" });
+    expect(raw.userNote).toBe("n");
+    const b = Config.fromEnv();
+    s.apply(b);
+    expect(b.asrLanguage).toBe("de");
+
+    fs.writeFileSync(s.file, JSON.stringify({ asrLanguage: "klingon" }));
+    expect(s.load().asrLanguage).toBeUndefined();
+    const c = Config.fromEnv();
+    c.asrLanguage = "fr"; // the .env value stays when the stored one is junk
+    s.apply(c);
+    expect(c.asrLanguage).toBe("fr");
   });
 });

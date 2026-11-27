@@ -3,8 +3,9 @@
  * remembered across restarts.
  *
  * `Config.fromEnv()` is the environment-derived baseline and stays the source of truth
- * for everything that is *not* a drawer switch. The drawer only ever overrides six of its
- * fields (half-duplex, barge-in, the two mode selects, the pi/API leg, thinking), and
+ * for everything that is *not* a drawer switch. The drawer only ever overrides seven of its
+ * fields (half-duplex, barge-in, the two mode selects, the pi/API leg, thinking, the ASR
+ * spoken language; precedence: settings.json, else .env ASR_LANGUAGE, else auto), and
  * those overrides used to be lost on restart: the drawer wrote straight into the live
  * `Config`, nothing persisted them, and the next process came back on the `.env` value.
  *
@@ -16,11 +17,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  type AsrLanguage,
   type CmdMode,
   type Config,
   type DecisionMode,
   normalizeCmdMode,
   normalizeDecisionMode,
+  parseAsrLanguage,
 } from "./config";
 import { writeJsonAtomic } from "./util";
 
@@ -32,6 +35,7 @@ export type RuntimeSettings = {
   cmdMode: CmdMode;
   llmViaPi: boolean;
   llmDisableThinking: boolean;
+  asrLanguage: AsrLanguage;
 };
 
 const BOOL_KEYS = ["halfDuplex", "bargeIn", "llmViaPi", "llmDisableThinking"] as const;
@@ -45,6 +49,7 @@ export function captureSettings(cfg: Config): RuntimeSettings {
     cmdMode: cfg.cmdMode,
     llmViaPi: cfg.llmViaPi,
     llmDisableThinking: cfg.llmDisableThinking,
+    asrLanguage: parseAsrLanguage(cfg.asrLanguage) ?? "",
   };
 }
 
@@ -72,6 +77,8 @@ export class SettingsStore {
     if (typeof obj.decisionMode === "string")
       out.decisionMode = normalizeDecisionMode(obj.decisionMode, () => {});
     if (typeof obj.cmdMode === "string") out.cmdMode = normalizeCmdMode(obj.cmdMode, () => {});
+    const lang = parseAsrLanguage(obj.asrLanguage);
+    if (lang !== null) out.asrLanguage = lang;
     return out;
   }
 
@@ -85,6 +92,7 @@ export class SettingsStore {
     if (typeof s.bargeIn === "boolean") cfg.bargeIn = s.bargeIn;
     if (s.decisionMode !== undefined) cfg.decisionMode = s.decisionMode;
     if (s.cmdMode !== undefined) cfg.cmdMode = s.cmdMode;
+    if (s.asrLanguage !== undefined) cfg.asrLanguage = s.asrLanguage;
     if (typeof s.llmViaPi === "boolean") cfg.llmViaPi = s.llmViaPi;
     if (typeof s.llmDisableThinking === "boolean") cfg.llmDisableThinking = s.llmDisableThinking;
   }

@@ -388,6 +388,9 @@ const uiIt = {
   "set.grp.cmd": "comandi",
   "set.cmd.title": "Esecuzione comandi Linux locali",
   "set.cmd.sub": "quando posso eseguire comandi",
+  "set.asr": "lingua parlata",
+  "set.asr.title": "Lingua che il riconoscimento vocale si aspetta; vale dalla prossima frase",
+  "set.asr.sub": "auto = riconosce da sola, a ogni frase",
   "set.turn.title":
     "Quanto chiedo all'LLM se hai finito di parlare, quando il silenzio da solo non basta",
   "set.turn": "fine turno",
@@ -515,6 +518,9 @@ const uiEn: Record<keyof typeof uiIt, string> = {
   "set.grp.cmd": "commands",
   "set.cmd.title": "Local Linux command execution",
   "set.cmd.sub": "when I may run commands",
+  "set.asr": "spoken language",
+  "set.asr.title": "Language the speech recognition expects; applies from the next utterance",
+  "set.asr.sub": "auto = detect it on every utterance",
   "set.turn.title":
     "How often I ask the LLM whether you have finished speaking, when silence alone is not enough",
   "set.turn": "end of turn",

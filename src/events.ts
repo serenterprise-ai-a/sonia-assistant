@@ -66,6 +66,8 @@ export type HelloConfig = {
   barge_in: boolean;
   decision_mode: "off" | "auto" | "always";
   cmd_mode: "off" | "ask" | "auto";
+  /** Spoken-language hint for the ASR: "" = auto-detect, else en|de|fr|it|es. */
+  asr_language: string;
   llm_via_pi: boolean;
   thinking: boolean;
 };
@@ -173,6 +175,8 @@ export type ClientCommand =
       cmd_mode?: "off" | "ask" | "auto";
       llm_via_pi?: boolean;
       thinking?: boolean;
+      /** "" (auto) | en | de | fr | it | es; anything else is ignored with a warning. */
+      asr_language?: string;
       /** TTS voice preset picked in the settings drawer. */
       tts_voice?: string;
     };
