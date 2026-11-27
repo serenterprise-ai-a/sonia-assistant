@@ -1332,6 +1332,8 @@ export class Assistant {
             ];
           }
         }
+        // local patch (2026-11-27): rounds were glued ("later.I am still…") in the final text
+        if (resp.fullText && textRound && !/\s$/.test(resp.fullText) && !/^\s/.test(textRound)) resp.fullText += " ";
         resp.fullText += textRound;
         if (!calls) break;
         if (offer === null) {
